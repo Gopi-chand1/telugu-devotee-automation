@@ -6,7 +6,11 @@ on:
       source_run_id:
         description: "Required only for manual runs: run ID that contains the production manifest artifact"
         required: false
-        default: ""
+        default: "38144490097"
+      source_artifact_name:
+        description: "Artifact to download for a manual run"
+        required: true
+        default: "telugu-devotee-episode-2"
   workflow_run:
     workflows: ["TELUGU DEVOTEE Production Manifest Export"]
     types: [completed]
@@ -33,17 +37,19 @@ jobs:
         run: |
           if [ "$EVENT_NAME" = "workflow_run" ]; then
             echo "run_id=$EVENT_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=telugu-devotee-production-manifest" >> "$GITHUB_OUTPUT"
           elif [ -n "$MANUAL_RUN_ID" ]; then
             echo "run_id=$MANUAL_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=${{ inputs.source_artifact_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::For a manual run, provide the run ID that created the production manifest artifact."
+            echo "::error::For a manual run, provide the run ID that created the source artifact."
             exit 1
           fi
 
       - name: Download existing production manifest (no Gemini call)
         uses: actions/download-artifact@v4
         with:
-          name: telugu-devotee-production-manifest
+          name: ${{ steps.source.outputs.artifact_name }}
           run-id: ${{ steps.source.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: downloaded
@@ -52,12 +58,18 @@ jobs:
         run: |
           mkdir -p output
           MANIFEST="$(find downloaded -type f -name production_manifest.csv -print -quit)"
-          if [ -z "$MANIFEST" ]; then
-            echo "::error::production_manifest.csv was not found in the selected run's artifact."
-            find downloaded -maxdepth 3 -type f -print || true
-            exit 1
+          if [ -n "$MANIFEST" ]; then
+            cp "$MANIFEST" output/production_manifest.csv
+          else
+            PACKAGE="$(find downloaded -type f -name episode_package.md -print -quit)"
+            if [ -z "$PACKAGE" ]; then
+              echo "::error::Neither production_manifest.csv nor episode_package.md was found in the selected artifact."
+              find downloaded -maxdepth 3 -type f -print || true
+              exit 1
+            fi
+            cp "$PACKAGE" output/episode_package.md
+            python scripts/export_production_assets.py
           fi
-          cp "$MANIFEST" output/production_manifest.csv
           python scripts/export_flow_prompt_pack.py
 
       - name: Upload Flow prompt pack
