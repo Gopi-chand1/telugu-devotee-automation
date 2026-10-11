@@ -1,4 +1,3 @@
-
 name: TELUGU DEVOTEE Daily Workflow
 
 on:
@@ -10,22 +9,100 @@ permissions:
   contents: read
 
 jobs:
-  daily-check:
+  generate-episode:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check repository files
+      - name: Generate Ramayanam episode
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          echo "TELUGU DEVOTEE workflow started"
-          echo "Checking available skill files..."
+          python - <<'PY'
+          import os
+          import json
+          import urllib.request
+          from pathlib import Path
 
-          echo "Repository files:"
-          find . -maxdepth 4 -type f | sort | head -200
+          key = os.environ.get("GEMINI_API_KEY")
+          if not key:
+              raise SystemExit("Add GEMINI_API_KEY in GitHub Secrets")
 
-          echo "Searching for skill instructions:"
-          find . -type f -name "SKILL.md" -print
+          script = Path("skills/yt-script/SKILL.md")
+          seo = Path("skills/yt-seo/SKILL.md")
 
-          echo "Repository check completed."
+          if not script.exists() or not seo.exists():
+              raise SystemExit("Required SKILL.md file is missing")
+
+          instructions = f"""
+          Create an original TELUGU DEVOTEE Ramayanam episode.
+
+          Follow these instructions:
+          {script.read_text(encoding="utf-8")}
+
+          SEO instructions:
+          {seo.read_text(encoding="utf-8")}
+
+          Requirements:
+          - Telugu story and character dialogues.
+          - Every scene is 10 seconds.
+          - Include a detailed Image Prompt and Motion Prompt
+            for every scene.
+          - Motion timing: 0-3s, 3-6s, 6-10s.
+          - Keep character faces, clothing, weapons and ages consistent.
+          - Cinematic visuals, connected action and scene transitions.
+          - Specify which character speaks and lip-sync requirements.
+          - Provide prompts suitable for Google Flow and Google Vids.
+          - Include YouTube title, description, hashtags and SEO tags.
+          - Do not claim that a video has been generated.
+          - Do not repeat previous episodes; identify the episode
+            clearly and avoid inventing continuity information.
+
+          Return the complete episode package in Markdown.
+          """
+
+          url = (
+              "https://generativelanguage.googleapis.com/"
+              "v1beta/models/gemini-2.5-flash:generateContent"
+          )
+
+          payload = {
+              "contents": [{
+                  "parts": [{"text": instructions}]
+              }],
+              "generationConfig": {
+                  "temperature": 0.7,
+                  "maxOutputTokens": 8192
+              }
+          }
+
+          request = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode(),
+              headers={
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": key
+              },
+              method="POST"
+          )
+
+          with urllib.request.urlopen(request, timeout=300) as response:
+              result = json.loads(response.read().decode())
+
+          text = result["candidates"][0]["content"]["parts"][0]["text"]
+
+          out = Path("output")
+          out.mkdir(exist_ok=True)
+          (out / "episode_package.md").write_text(text, encoding="utf-8")
+
+          print("Episode package generated.")
+          PY
+
+      - name: Save episode package
+        uses: actions/upload-artifact@v4
+        with:
+          name: telugu-devotee-episode
+          path: output/episode_package.md
+          retention-days: 7
