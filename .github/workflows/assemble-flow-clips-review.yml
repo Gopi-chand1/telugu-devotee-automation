@@ -1,0 +1,88 @@
+name: TELUGU DEVOTEE — Assemble Flow Clips for Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      clips_zip_url:
+        description: "Direct-download URL to a ZIP containing numbered MP4s (S01.mp4, S02.mp4...)"
+        required: true
+        type: string
+      scene_seconds:
+        description: "Seconds per clip (Veo clips are commonly 8 seconds)"
+        required: true
+        default: "8"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  assemble-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout existing repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Download clip ZIP
+        env:
+          CLIPS_ZIP_URL: ${{ inputs.clips_zip_url }}
+        run: |
+          python - <<'PY'
+          import os, urllib.parse, urllib.request
+          url = os.environ["CLIPS_ZIP_URL"].strip()
+          parsed = urllib.parse.urlparse(url)
+          if parsed.scheme != "https":
+              raise SystemExit("Use a public HTTPS direct-download URL.")
+          req = urllib.request.Request(url, headers={"User-Agent": "TELUGU-DEVOTEE-review-builder"})
+          with urllib.request.urlopen(req, timeout=60) as response, open("clips.zip", "wb") as out:
+              total = 0
+              while True:
+                  chunk = response.read(1024 * 1024)
+                  if not chunk: break
+                  total += len(chunk)
+                  if total > 2 * 1024 * 1024 * 1024:
+                      raise SystemExit("ZIP exceeds the 2 GB safety limit.")
+                  out.write(chunk)
+          if total < 100:
+              raise SystemExit("Downloaded file is unexpectedly small; URL may be a preview page, not a direct ZIP download.")
+          print(f"Downloaded ZIP: {total} bytes")
+          PY
+
+      - name: Extract and validate clips
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z = zipfile.ZipFile("clips.zip")
+          total = 0
+          for item in z.infolist():
+              p = Path(item.filename)
+              if p.is_absolute() or ".." in p.parts:
+                  raise SystemExit("Unsafe ZIP path rejected.")
+              total += item.file_size
+              if total > 4 * 1024 * 1024 * 1024:
+                  raise SystemExit("Extracted ZIP exceeds 4 GB safety limit.")
+          z.extractall("incoming-clips")
+          vids = list(Path("incoming-clips").rglob("*.mp4")) + list(Path("incoming-clips").rglob("*.MP4"))
+          print(f"Found {len(vids)} MP4 files")
+          if not vids:
+              raise SystemExit("ZIP contains no MP4 clips.")
+          PY
+
+      - name: Assemble numbered clips (preserve existing audio)
+        run: |
+          python scripts/assemble_flow_clips_review.py --clips incoming-clips --seconds "${{ inputs.scene_seconds }}" --output output/telugu_devotee_review.mp4
+
+      - name: Upload review video (not published)
+        uses: actions/upload-artifact@v4
+        with:
+          name: telugu-devotee-review-video
+          path: output/telugu_devotee_review.mp4
+          if-no-files-found: error
+          retention-days: 7
