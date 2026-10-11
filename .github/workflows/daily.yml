@@ -20,84 +20,458 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python - <<'PY'
-          import os
-          import json
-          import urllib.request
-          from pathlib import Path
+          python - <<'PY
+          
+import os
+import json
+import time
+import random
+import urllib.request
+import urllib.error
+from pathlib import Path
 
-          key = os.environ.get("GEMINI_API_KEY")
-          if not key:
-              raise SystemExit("Add GEMINI_API_KEY in GitHub Secrets")
+# ============================================================
+# TELUGU DEVOTEE - RAMAYANAM EPISODE GENERATOR
+# ============================================================
 
-          script = Path("skills/yt-script/SKILL.md")
-          seo = Path("skills/yt-seo/SKILL.md")
+API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-          if not script.exists() or not seo.exists():
-              raise SystemExit("Required SKILL.md file is missing")
+MODEL = "gemini-3.8-flash"
+API_URL = (
+    "https://generativelanguage.googleapis.com/"
+    f"v1beta/models/{MODEL}:generateContent"
+)
 
-          instructions = f"""
-          Create an original TELUGU DEVOTEE Ramayanam episode.
+ROOT = Path.cwd()
+SCRIPT_SKILL_PATH = ROOT / "skills" / "yt-script" / "SKILL.md"
+SEO_SKILL_PATH = ROOT / "skills" / "yt-seo" / "SKILL.md"
+OUTPUT_PATH = ROOT / "output" / "episode_package.md"
 
-          Follow these instructions:
-          {script.read_text(encoding="utf-8")}
+EPISODE_NUMBER = os.environ.get("EPISODE_NUMBER", "2")
+EPISODE_TITLE = os.environ.get(
+    "EPISODE_TITLE",
+    "విశ్వామిత్ర మహర్షి రాక నుంచి సీతారామ కళ్యాణం వరకు"
+)
 
-          SEO instructions:
-          {seo.read_text(encoding="utf-8")}
 
-          Requirements:
-          - Telugu story and character dialogues.
-          - Every scene is 10 seconds.
-          - Include a detailed Image Prompt and Motion Prompt
-            for every scene.
-          - Motion timing: 0-3s, 3-6s, 6-10s.
-          - Keep character faces, clothing, weapons and ages consistent.
-          - Cinematic visuals, connected action and scene transitions.
-          - Specify which character speaks and lip-sync requirements.
-          - Provide prompts suitable for Google Flow and Google Vids.
-          - Include YouTube title, description, hashtags and SEO tags.
-          - Do not claim that a video has been generated.
-          - Do not repeat previous episodes; identify the episode
-            clearly and avoid inventing continuity information.
+def read_skill(path):
+    """Read a skill file and stop clearly if it is missing."""
+    if not path.exists():
+        raise SystemExit(
+            f"Required skill file not found: {path}\n"
+            "Check that the file exists in your GitHub repository."
+        )
 
-          Return the complete episode package in Markdown.
-          """
+    content = path.read_text(encoding="utf-8").strip()
 
-          url = (
-              "https://generativelanguage.googleapis.com/"
-              "v1beta/models/gemini-3.8-flash:generateContent"
-          )
+    if not content:
+        raise SystemExit(f"Skill file is empty: {path}")
 
-          payload = {
-              "contents": [{
-                  "parts": [{"text": instructions}]
-              }],
-              "generationConfig": {
-                  "temperature": 0.7,
-                  "maxOutputTokens": 8192
-              }
-          }
+    return content
 
-          request = urllib.request.Request(
-              url,
-              data=json.dumps(payload).encode(),
-              headers={
-                  "Content-Type": "application/json",
-                  "x-goog-api-key": key
-              },
-              method="POST"
-          )
 
-          with urllib.request.urlopen(request, timeout=300) as response:
-              result = json.loads(response.read().decode())
+def build_prompt(script_skill, seo_skill):
+    """Build the complete Telugu Ramayanam episode prompt."""
 
-          text = result["candidates"][0]["content"]["parts"][0]["text"]
+    return f"""
+You are the lead screenwriter, director, cinematographer,
+Telugu dialogue writer and YouTube SEO specialist for
+the devotional channel TELUGU DEVOTEE.
 
-          out = Path("output")
-          out.mkdir(exist_ok=True)
-          (out / "episode_package.md").write_text(text, encoding="utf-8")
+CHANNEL: TELUGU DEVOTEE
+EPISODE NUMBER: {EPISODE_NUMBER}
+EPISODE TITLE: {EPISODE_TITLE}
 
-          print("Episode package generated.")
+SCRIPT SKILL INSTRUCTIONS:
+{script_skill}
+
+SEO SKILL INSTRUCTIONS:
+{seo_skill}
+
+============================================================
+MAIN OBJECTIVE
+============================================================
+
+Create a compelling, cinematic Telugu Ramayanam episode
+for a devotional YouTube audience.
+
+Target duration: approximately 10 minutes.
+Scene duration: exactly 10 seconds per scene.
+Target scene count: 60 scenes.
+
+Use the traditional Ramayana narrative respectfully.
+Do not invent events that contradict the established story.
+Keep character appearance and story continuity consistent.
+
+If this episode follows an earlier episode, do not repeat
+its completed scenes. Continue the story from the specified
+episode scope. Do not claim access to previous generated
+episodes unless their contents are actually provided.
+
+For Episode 2, use this narrative progression:
+1. Sage Vishwamitra arrives in Ayodhya.
+2. His request to King Dasharatha.
+3. Rama and Lakshmana depart with Vishwamitra.
+4. Forest journey and instruction in Bala and Atibala.
+5. Encounter with Tataka and the moral dilemma.
+6. Tataka episode and its consequences.
+7. Protection of Vishwamitra's yajna.
+8. Maricha and Subahu attack the sacrifice.
+9. Rama and Lakshmana protect the yajna.
+10. Journey toward Mithila and the Ahalya episode.
+11. Arrival in Mithila.
+12. First meeting of Rama and Sita, handled respectfully.
+13. Shiva's bow and Sita's swayamvar.
+14. Rama and Sita's wedding and the other royal weddings.
+15. Parashurama's encounter, followed by the return journey.
+
+Adapt the scope if a different episode title is supplied.
+Do not squeeze all events into a rushed or confusing story.
+Preserve cause-and-effect between scenes.
+
+============================================================
+CHARACTER CONTINUITY
+============================================================
+
+RAMA:
+A youthful sixteen-year-old prince, calm divine face,
+expressive dark-brown eyes, small vertical tilak,
+shoulder-length black hair tied neatly, slim athletic build,
+traditional yellow/saffron dhoti and yellow angavastram,
+subtle royal ornaments, bow and quiver when appropriate.
+Keep the same facial features, age, clothing logic and
+body proportions across all scenes.
+
+LAKSHMANA:
+A youthful fifteen-year-old prince, slightly slimmer
+athletic build than Rama, sharp dark eyes, tied-back black
+hair, yellow-green traditional clothing, bow and quiver.
+Keep his appearance consistent in every scene.
+
+SAGE VISHWAMITRA:
+An ascetic sage around sixty to sixty-five years old,
+long matted dark-grey hair and beard, saffron robes,
+rudraksha malas, wooden staff and dignified expression.
+Keep his appearance consistent.
+
+OTHER CHARACTERS:
+Maintain consistent appearances for Dasharatha, Kaushalya,
+Kaikeyi, Sumitra, Sita, Janaka, Ahalya, Tataka, Maricha,
+Subahu and Parashurama. Describe each character clearly
+the first time they appear and preserve that design later.
+
+Do not randomly change faces, hair, age, jewelry, costumes,
+weapons or height between scenes.
+
+============================================================
+VISUAL DIRECTION
+============================================================
+
+Use realistic cinematic Ramayanam visuals with an epic,
+devotional, Indian historical-fantasy atmosphere.
+
+For every scene specify:
+- Character appearance and exact action.
+- Environment, architecture, plants and background.
+- Lighting, time of day, weather and atmosphere.
+- Camera angle, camera movement, lens feeling and depth.
+- Cloth, hair, leaves, dust, mist and particle movement.
+- Emotional expression and dramatic purpose.
+- How the scene connects to the previous scene.
+- How the next scene can continue naturally.
+
+Use cinematic framing, detailed textures, believable anatomy,
+natural skin texture, realistic cloth and controlled VFX.
+Avoid plastic-looking skin, distorted hands, extra fingers,
+duplicated characters, random costume changes and modern
+objects in ancient settings.
+
+Do not use copyrighted film characters or imitate a specific
+film's exact shots. Create original visual compositions.
+
+============================================================
+MANDATORY SCENE FORMAT
+============================================================
+
+Create 60 numbered scenes, each exactly 10 seconds long.
+
+For EVERY scene, use this structure:
+
+### Scene 01 — [Telugu scene heading]
+**Duration:** 10 seconds
+
+**Story Purpose:**
+Explain the scene's role in the story and emotional arc.
+
+**Image Prompt:**
+Write a detailed, standalone visual-generation prompt.
+Include character identity, age, face, hair, costume,
+body proportions, props, location, background, lighting,
+camera angle, composition, depth, atmosphere and mood.
+Repeat the relevant character details in every scene.
+Do not write "same character as previous scene" as a
+substitute for the actual description.
+
+**Motion Prompt:**
+Describe continuous, physically believable motion in
+three mandatory time sections:
+
+0–3s:
+Specify the opening action, character movement,
+facial expression and camera movement.
+
+3–6s:
+Specify the next action and how it follows the opening.
+Include relevant environmental, cloth, hair or VFX motion.
+
+6–10s:
+Specify the concluding action, emotional beat, camera
+movement and transition into the next scene.
+
+Every time range must describe scene-specific movement.
+Do not reuse generic motion text across scenes.
+
+**Telugu Character Dialogue:**
+Write natural, emotionally engaging Telugu dialogue
+spoken by the characters. Use character names.
+Use dialogue rather than a narrator explaining the story.
+If no dialogue is needed, explicitly write:
+"ఈ సన్నివేశంలో సంభాషణ లేదు."
+
+**Lip-Sync Instructions:**
+Only the character who is speaking may move their mouth.
+Silent characters must keep their mouths closed.
+Match mouth and jaw movements to the spoken Telugu
+syllables. Include natural cheek and facial movement.
+Do not create random lip movement or overlapping dialogue.
+
+**Sound Design and Music:**
+Describe suitable devotional orchestral music, ambience,
+foley, impacts and pauses. Use original, non-infringing
+music direction. Keep dialogue clearly audible.
+
+**Continuity and Transition:**
+Explain the exact visual or action detail that connects
+this scene to the next scene.
+
+============================================================
+STORY QUALITY AND VIEWER RETENTION
+============================================================
+
+- Start with a powerful visual or emotional hook.
+- Give each scene a clear narrative purpose.
+- Build tension gradually instead of rushing events.
+- Use meaningful Telugu character conversations.
+- Create emotional pauses as well as action.
+- Include dramatic reveals only when justified by the story.
+- Use natural scene-to-scene continuity.
+- End the episode with a compelling, story-relevant hook.
+- Do not use misleading clickbait or fabricate scripture.
+- Keep the devotional tone respectful and family-friendly.
+
+============================================================
+YOUTUBE SEO OUTPUT
+============================================================
+
+After the 60 scenes, provide:
+
+1. Three Telugu YouTube title options.
+2. Three Telugu-English title options.
+3. One recommended title.
+4. A compelling Telugu description.
+5. An English description.
+6. Relevant hashtags, without excessive repetition.
+7. YouTube SEO tags as a comma-separated list.
+8. A pinned comment encouraging meaningful discussion.
+9. A short community post promoting the episode.
+10. One thumbnail concept with Telugu text.
+11. A short thumbnail image prompt.
+12. A one-sentence opening hook for a promotional Short.
+
+All SEO content must accurately describe the actual episode.
+Do not promise guaranteed virality, views or subscribers.
+
+============================================================
+OUTPUT RULES
+============================================================
+
+- Output in Markdown.
+- Use Telugu for the story and character dialogue.
+- English is allowed for technical prompt headings and SEO
+  sections where requested.
+- Do not omit Image Prompt or Motion Prompt for any scene.
+- Every scene must contain 0–3s, 3–6s and 6–10s sections.
+- Do not replace later scenes with summaries.
+- Do not stop after a few sample scenes.
+- Maintain detailed prompts throughout the episode.
+- Keep the response organized and production-ready.
+- Follow both supplied skill files wherever compatible
+  with these requirements.
+
+Now generate the complete episode package.
+"""
+
+
+def generate_with_gemini(prompt):
+    """Call Gemini and retry temporary errors with backoff."""
+
+    request_body = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.8,
+            "maxOutputTokens": 30000
+        }
+    }
+
+    body_bytes = json.dumps(request_body).encode("utf-8")
+
+    for attempt in range(5):
+        request = urllib.request.Request(
+            API_URL,
+            data=body_bytes,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": API_KEY
+            },
+            method="POST"
+        )
+
+        try:
+            print(
+                f"Calling Gemini API: attempt {attempt + 1}/5 "
+                f"using model {MODEL}"
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=300
+            ) as response:
+                raw_response = response.read().decode("utf-8")
+                result = json.loads(raw_response)
+
+            candidates = result.get("candidates", [])
+
+            if not candidates:
+                feedback = result.get("promptFeedback", {})
+                raise SystemExit(
+                    "Gemini returned no candidates.\n"
+                    + json.dumps(feedback, ensure_ascii=False)[:3000]
+                )
+
+            parts = (
+                candidates[0]
+                .get("content", {})
+                .get("parts", [])
+            )
+
+            generated_text = "\n".join(
+                part["text"]
+                for part in parts
+                if isinstance(part, dict) and "text" in part
+            ).strip()
+
+            if not generated_text:
+                raise SystemExit(
+                    "Gemini response contained no text.\n"
+                    + json.dumps(result, ensure_ascii=False)[:3000]
+                )
+
+            finish_reason = candidates[0].get("finishReason", "")
+            if finish_reason == "MAX_TOKENS":
+                generated_text += (
+                    "\n\n> **గమనిక:** Gemini output token limit "
+                    "వల్ల సమాధానం మధ్యలో ఆగి ఉండవచ్చు. "
+                    "మిగిలిన scenes కోసం తదుపరి generation అవసరం."
+                )
+
+            print("Gemini generation completed.")
+            return generated_text
+
+        except urllib.error.HTTPError as error:
+            error_body = error.read().decode(
+                "utf-8",
+                errors="replace"
+            )
+
+            retryable = error.code in (
+                408, 429, 500, 502, 503, 504
+            )
+
+            if retryable and attempt < 4:
+                wait_seconds = (2 ** (attempt + 1)) + random.random()
+                print(
+                    f"Gemini returned HTTP {error.code}. "
+                    f"Retrying in {wait_seconds:.1f} seconds."
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            raise SystemExit(
+                f"Gemini API failed with HTTP {error.code}.\n"
+                f"Response: {error_body[:3000]}"
+            )
+
+        except (urllib.error.URLError, TimeoutError) as error:
+            if attempt < 4:
+                wait_seconds = (2 ** (attempt + 1)) + random.random()
+                print(
+                    "Temporary network error: "
+                    f"{error}. Retrying in {wait_seconds:.1f} seconds."
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            raise SystemExit(
+                f"Gemini network request failed after 5 attempts: {error}"
+            )
+
+        except json.JSONDecodeError as error:
+            raise SystemExit(
+                f"Gemini returned invalid JSON: {error}"
+            )
+
+    raise SystemExit("Gemini generation failed after all retries.")
+
+
+def main():
+    if not API_KEY:
+        raise SystemExit(
+            "GEMINI_API_KEY is missing. Add it under GitHub "
+            "Repository Settings > Secrets and variables > Actions."
+        )
+
+    print("Loading YouTube script and SEO skills...")
+
+    script_skill = read_skill(SCRIPT_SKILL_PATH)
+    seo_skill = read_skill(SEO_SKILL_PATH)
+
+    print("Building Ramayanam episode prompt...")
+
+    prompt = build_prompt(script_skill, seo_skill)
+
+    print(f"Generating Episode {EPISODE_NUMBER}: {EPISODE_TITLE}")
+
+    episode_text = generate_with_gemini(prompt)
+
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    OUTPUT_PATH.write_text(
+        episode_text + "\n",
+        encoding="utf-8"
+    )
+
+    print(f"Episode package saved to: {OUTPUT_PATH}")
+    print(f"Output size: {OUTPUT_PATH.stat().st_size} bytes")
+
+
+if __name__ == "__main__":
+    main()
+
           PY
 
       - name: Save episode package
