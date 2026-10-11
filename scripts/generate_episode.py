@@ -79,9 +79,18 @@ def call_gemini(prompt, max_tokens, temperature=0.8):
             break
         except urllib.error.HTTPError as err:
             details = err.read().decode("utf-8", errors="replace")
+            # A quota-exhausted 429 will not be fixed by sleeping and retrying.
+            # Stop immediately so the run preserves its partial output and does
+            # not waste requests/time on the remaining scenes or SEO.
+            if err.code == 429:
+                raise GenError(
+                    "Gemini HTTP 429 (rate limit/quota). Stopping without retries "
+                    "to preserve the partial package. Check https://ai.dev/rate-limit. "
+                    + details[:1500]
+                )
             if err.code in RETRY_CODES and attempt < 4:
                 delay = 2 ** (attempt + 1) + random.random()
-                print(f"HTTP {err.code}; retrying in {delay:.1f}s")
+                print(f"HTTP {err.code}; retrying in {delay:.1f}s", flush=True)
                 time.sleep(delay)
                 continue
             hint = ""
@@ -252,8 +261,9 @@ def main():
         f"Generated {now} | model {MODEL} | scenes {OFFSET + 1}-{OFFSET + TOTAL}"
     ]
     failed = []
+    api_failed = False
 
-    print("Step 1/3: beat plan")
+    print("Step 1/3: beat plan", flush=True)
     try:
         beats = make_beat_plan()
     except GenError as err:
@@ -264,15 +274,16 @@ def main():
     )
     write_package(parts)
 
-    print("Step 2/3: scene batches")
+    print("Step 2/3: scene batches", flush=True)
     prev_tail = ""
     for start in range(1, TOTAL + 1, BATCH):
         end = min(start + BATCH - 1, TOTAL)
-        print(f"  scenes {OFFSET + start}-{OFFSET + end}")
+        print(f"  scenes {OFFSET + start}-{OFFSET + end}", flush=True)
         try:
             text, ok = make_batch(start, end, beats, prev_tail, script_skill, locks)
         except GenError as err:
             failed.append(f"{OFFSET + start}-{OFFSET + end}: {err}")
+            api_failed = True
             break
         if not ok:
             failed.append(f"{OFFSET + start}-{OFFSET + end}: validation failed")
@@ -285,14 +296,22 @@ def main():
         prev_tail = text[-1500:]
         write_package(parts)
 
-    print("Step 3/3: SEO package")
+    # If a scene API call failed (especially quota exhaustion), do not spend
+    # another request on SEO. Save and upload the partial script via the workflow.
+    if api_failed:
+        write_package(parts)
+        print(f"Saved partial package {OUTPUT} ({OUTPUT.stat().st_size} bytes)", flush=True)
+        print("PROBLEMS:\n  " + "\n  ".join(failed), flush=True)
+        sys.exit(1)
+
+    print("Step 3/3: SEO package", flush=True)
     try:
         parts.append("## SEO and packaging\n" + make_seo(beats, seo_skill))
     except GenError as err:
         failed.append(f"SEO: {err}")
     write_package(parts)
 
-    print(f"Saved {OUTPUT} ({OUTPUT.stat().st_size} bytes)")
+    print(f"Saved {OUTPUT} ({OUTPUT.stat().st_size} bytes)", flush=True)
     if failed:
         print("PROBLEMS:\n  " + "\n  ".join(failed))
         sys.exit(1)
