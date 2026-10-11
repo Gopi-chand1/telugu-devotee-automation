@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: "Run ID that contains telugu-devotee-production-manifest; leave blank to use the latest manifest export run"
+        description: "Required only for manual runs: run ID that contains the production manifest artifact"
         required: false
         default: ""
   workflow_run:
