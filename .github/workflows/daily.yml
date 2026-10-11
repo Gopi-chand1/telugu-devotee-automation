@@ -27,7 +27,7 @@ on:
         default: "gemini-3.8-flash"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate-episode:
@@ -57,3 +57,20 @@ jobs:
           path: output/episode_package.md
           if-no-files-found: warn
           retention-days: 30
+
+      # Persist the checkpoint so a later manual run can reuse completed scenes.
+      - name: Commit episode checkpoint
+        if: always() && hashFiles('output/episode_package.md') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EPISODE_NUMBER: ${{ inputs.episode_number }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/episode_package.md
+          if git diff --cached --quiet; then
+            echo "No checkpoint changes to commit."
+          else
+            git commit -m "Save TELUGU DEVOTEE episode ${EPISODE_NUMBER} checkpoint"
+            git push
+          fi
