@@ -1,0 +1,41 @@
+name: TELUGU DEVOTEE Production Manifest Export
+
+# Separate manual utility workflow. Does not modify or trigger daily.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check episode package exists
+        run: |
+          if [ ! -f output/episode_package.md ]; then
+            echo "::error::output/episode_package.md is missing. Generate and save the episode package first."
+            exit 1
+          fi
+
+      - name: Export scene manifest
+        run: python scripts/export_production_assets.py
+
+      - name: Upload production manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: telugu-devotee-production-manifest
+          path: |
+            output/production_manifest.csv
+            output/production_manifest.json
+          if-no-files-found: error
+          retention-days: 30
