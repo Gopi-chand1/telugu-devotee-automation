@@ -256,21 +256,64 @@ def main():
     seo_skill = read_text(ROOT / "skills" / "yt-seo" / "SKILL.md")
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    parts = [
-        f"# TELUGU DEVOTEE - Episode {EPISODE}: {TITLE}\n"
+    package_header = (
+        f"# TELUGU DEVOTEE - Episode {EPISODE}: {TITLE}\\n"
         f"Generated {now} | model {MODEL} | scenes {OFFSET + 1}-{OFFSET + TOTAL}"
-    ]
+    )
     failed = []
     api_failed = False
+    beats = {}
+    completed_batches = {}
+    scene_sections = {}
+    existing_seo = ""
 
+    # Resume only when the saved package clearly belongs to this same episode.
+    # The workflow commits the package even after a quota failure.
+    if OUTPUT.exists():
+        existing = OUTPUT.read_text(encoding="utf-8")
+        same_job = (
+            existing.startswith(f"# TELUGU DEVOTEE - Episode {EPISODE}: {TITLE}\\n")
+            and f"scenes {OFFSET + 1}-{OFFSET + TOTAL}" in existing.splitlines()[1:2]
+        )
+        if same_job:
+            print("Found checkpoint for this episode; checking reusable work.", flush=True)
+            beat_section = re.search(
+                r"^## Beat plan\\s*\\n(.*?)(?=^### SCENE |^## SEO and packaging\\s*$|\\Z)",
+                existing, re.M | re.S
+            )
+            if beat_section:
+                for line in beat_section.group(1).splitlines():
+                    match = re.match(r"^\\s*(\\d+)\\.\\s+(.*\\S)\\s*$", line)
+                    if match:
+                        local_n = int(match.group(1)) - OFFSET
+                        if 1 <= local_n <= TOTAL:
+                            beats[local_n] = match.group(2)
+            if sorted(beats) != list(range(1, TOTAL + 1)):
+                beats = {}
+            scene_matches = list(re.finditer(r"^### SCENE (\\d+) \\|", existing, re.M))
+            for i, match in enumerate(scene_matches):
+                number = int(match.group(1))
+                end_pos = scene_matches[i + 1].start() if i + 1 < len(scene_matches) else len(existing)
+                seo_pos = existing.find("## SEO and packaging", match.start(), end_pos)
+                if seo_pos >= 0:
+                    end_pos = seo_pos
+                scene_sections[number] = existing[match.start():end_pos].strip()
+            seo_match = re.search(r"^## SEO and packaging\\s*\\n(.*)\\Z", existing, re.M | re.S)
+            if seo_match:
+                existing_seo = seo_match.group(1).strip()
+        else:
+            print("Existing package is for a different episode/settings; starting fresh.", flush=True)
+
+    parts = [package_header]
     print("Step 1/3: beat plan", flush=True)
-    try:
-        beats = make_beat_plan()
-    except GenError as err:
-        raise SystemExit(f"ERROR: {err}")
+    if not beats:
+        try:
+            beats = make_beat_plan()
+        except GenError as err:
+            raise SystemExit(f"ERROR: {err}")
     parts.append(
-        "## Beat plan\n"
-        + "\n".join(f"{OFFSET + n}. {beats[n]}" for n in sorted(beats))
+        "## Beat plan\\n"
+        + "\\n".join(f"{OFFSET + n}. {beats[n]}" for n in sorted(beats))
     )
     write_package(parts)
 
@@ -278,7 +321,22 @@ def main():
     prev_tail = ""
     for start in range(1, TOTAL + 1, BATCH):
         end = min(start + BATCH - 1, TOTAL)
-        print(f"  scenes {OFFSET + start}-{OFFSET + end}", flush=True)
+        labels = list(range(OFFSET + start, OFFSET + end + 1))
+        if all(n in scene_sections for n in labels):
+            reusable = "\\n\\n".join(scene_sections[n] for n in labels)
+            found = [
+                int(n) for n in re.findall(
+                    r"^### SCENE (\\d+) \\|", reusable, re.M
+                )
+            ]
+            if found == labels:
+                print(f"  reusing scenes {labels[0]}-{labels[-1]}", flush=True)
+                parts.append(reusable)
+                prev_tail = reusable[-1500:]
+                write_package(parts)
+                completed_batches[start] = True
+                continue
+        print(f"  generating scenes {OFFSET + start}-{OFFSET + end}", flush=True)
         try:
             text, ok = make_batch(start, end, beats, prev_tail, script_skill, locks)
         except GenError as err:
@@ -289,7 +347,7 @@ def main():
             failed.append(f"{OFFSET + start}-{OFFSET + end}: validation failed")
             text = (
                 f"> WARNING: scenes {OFFSET + start}-{OFFSET + end} did not pass "
-                "validation (wrong scene numbers or cut off). Review or rerun.\n\n"
+                "validation (wrong scene numbers or cut off). Review or rerun.\\n\\n"
                 + text
             )
         parts.append(text)
@@ -301,14 +359,18 @@ def main():
     if api_failed:
         write_package(parts)
         print(f"Saved partial package {OUTPUT} ({OUTPUT.stat().st_size} bytes)", flush=True)
-        print("PROBLEMS:\n  " + "\n  ".join(failed), flush=True)
+        print("PROBLEMS:\\n  " + "\\n  ".join(failed), flush=True)
         sys.exit(1)
 
     print("Step 3/3: SEO package", flush=True)
-    try:
-        parts.append("## SEO and packaging\n" + make_seo(beats, seo_skill))
-    except GenError as err:
-        failed.append(f"SEO: {err}")
+    if existing_seo:
+        print("Reusing saved SEO package; no additional API request needed.", flush=True)
+        parts.append("## SEO and packaging\\n" + existing_seo)
+    else:
+        try:
+            parts.append("## SEO and packaging\\n" + make_seo(beats, seo_skill))
+        except GenError as err:
+            failed.append(f"SEO: {err}")
     write_package(parts)
 
     print(f"Saved {OUTPUT} ({OUTPUT.stat().st_size} bytes)", flush=True)
