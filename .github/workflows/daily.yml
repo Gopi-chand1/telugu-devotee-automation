@@ -1,0 +1,20 @@
+
+name: TELUGU DEVOTEE Daily Workflow
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  daily-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start daily workflow
+        run: |
+          echo "TELUGU DEVOTEE daily workflow started."
+          echo "Next step: connect episode generation and YouTube upload."
+          
