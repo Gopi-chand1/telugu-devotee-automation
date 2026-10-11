@@ -1,9 +1,30 @@
-name: TELUGU DEVOTEE Daily Workflow
+name: TELUGU DEVOTEE Episode Package
 
+# Manual run only: avoids regenerating the same episode and wasting free API quota.
+# Review the generated artifact before creating/publishing the video.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "30 2 * * *"
+    inputs:
+      episode_number:
+        description: "Episode number"
+        required: true
+        default: "2"
+      episode_title:
+        description: "Episode title (Telugu)"
+        required: true
+        default: "విశ్వామిత్ర మహర్షి రాక నుంచి సీతారామ కళ్యాణం వరకు"
+      story_outline:
+        description: "Story beats for this episode"
+        required: true
+        default: "Vishwamitra arrives in Ayodhya and asks Dasharatha for Rama's help. Rama and Lakshmana depart with the sage, learn Bala and Atibala, encounter Tataka, protect the yajna against Maricha and Subahu, visit Ahalya, travel to Mithila, encounter Sita, attend the Shiva bow swayamvar, marry, encounter Parashurama, and return to Ayodhya."
+      scene_offset:
+        description: "Scene number offset (0 = scenes 1-60, 60 = scenes 61-120)"
+        required: true
+        default: "0"
+      gemini_model:
+        description: "Gemini API model name"
+        required: true
+        default: "gemini-3.8-flash"
 
 permissions:
   contents: read
@@ -11,259 +32,28 @@ permissions:
 jobs:
   generate-episode:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Generate Ramayanam episode
+      - name: Generate episode package
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          EPISODE_NUMBER: "2"
-          EPISODE_TITLE: "విశ్వామిత్ర మహర్షి రాక నుంచి సీతారామ కళ్యాణం వరకు"
-        run: |
-          python - <<'PY'
-          import os
-          import json
-          import time
-          import random
-          import urllib.request
-          import urllib.error
-          from pathlib import Path
-
-          API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-          MODEL = "gemini-3.8-flash"
-          API_URL = (
-              "https://generativelanguage.googleapis.com/"
-              f"v1beta/models/{MODEL}:generateContent"
-          )
-
-          ROOT = Path.cwd()
-          OUTPUT = ROOT / "output" / "episode_package.md"
-          EPISODE = os.environ.get("EPISODE_NUMBER", "2")
-          TITLE = os.environ.get(
-              "EPISODE_TITLE",
-              "విశ్వామిత్ర మహర్షి రాక నుంచి సీతారామ కళ్యాణం వరకు"
-          )
-
-          if not API_KEY:
-              raise SystemExit(
-                  "ERROR: GEMINI_API_KEY secret is missing."
-              )
-
-          def read_skill(path):
-              if path.exists():
-                  return path.read_text(encoding="utf-8").strip()
-              print(f"WARNING: Optional skill file missing: {path}")
-              return ""
-
-          script_skill = read_skill(
-              ROOT / "skills" / "yt-script" / "SKILL.md"
-          )
-          seo_skill = read_skill(
-              ROOT / "skills" / "yt-seo" / "SKILL.md"
-          )
-
-          prompt = f"""
-          You are the Telugu Ramayanam screenwriter and YouTube
-          SEO specialist for TELUGU DEVOTEE.
-
-          EPISODE: {EPISODE}
-          TITLE: {TITLE}
-
-          SCRIPT SKILL:
-          {script_skill}
-
-          SEO SKILL:
-          {seo_skill}
-
-          Create a detailed Telugu cinematic Ramayanam episode.
-          Target duration: 10 minutes. Create 60 scenes, each
-          exactly 10 seconds long.
-
-          EPISODE 2 STORY:
-          Vishwamitra arrives in Ayodhya and asks Dasharatha for
-          Rama's help. Rama and Lakshmana depart with the sage,
-          learn Bala and Atibala, encounter Tataka, protect the
-          yajna against Maricha and Subahu, visit Ahalya, travel
-          to Mithila, encounter Sita, attend the Shiva bow
-          swayamvar, marry, encounter Parashurama, and return.
-
-          CHARACTER CONTINUITY:
-          Rama: youthful 16-year-old prince, calm divine face,
-          dark-brown eyes, vertical tilak, tied shoulder-length
-          black hair, slim athletic build, yellow dhoti and
-          yellow angavastram, bow and quiver when appropriate.
-
-          Lakshmana: youthful 15-year-old prince, slightly
-          slimmer athletic build, sharp dark eyes, tied-back
-          black hair, yellow-green traditional clothes, bow
-          and quiver.
-
-          Vishwamitra: sage aged 60-65, long matted dark-grey
-          hair and beard, saffron robes, rudraksha malas,
-          wooden staff and dignified expression.
-
-          Keep all faces, ages, costumes, proportions, props
-          and weapons consistent. Describe other characters
-          clearly when first introduced and preserve continuity.
-
-          VISUAL STYLE:
-          Realistic cinematic Indian epic fantasy, devotional
-          atmosphere, believable anatomy, natural skin texture,
-          detailed ancient Indian environments, cinematic
-          lighting, depth, atmospheric particles and controlled
-          VFX. Avoid plastic skin, distorted hands, extra fingers,
-          duplicated characters and modern objects.
-
-          EVERY SCENE MUST USE THIS FORMAT:
-
-          ### Scene 01 — Telugu heading
-          Duration: 10 seconds
-          Story Purpose:
-          Image Prompt: detailed standalone visual prompt with
-          character appearance, action, environment, lighting,
-          camera, composition, atmosphere and mood.
-          Motion Prompt:
-          0–3s: specific opening action and camera movement.
-          3–6s: continuous next action and environmental motion.
-          6–10s: concluding action and transition.
-          Telugu Character Dialogue: natural Telugu dialogue
-          spoken by named characters, not narrator exposition.
-          Lip-Sync Instructions: only the speaker moves their
-          mouth; silent characters keep their mouths closed;
-          match mouth movement to Telugu syllables.
-          Sound Design and Music: ambience, foley and original
-          non-infringing devotional orchestral direction.
-          Continuity and Transition: connect to the next scene.
-
-          Create 60 numbered scenes. Do not omit Image Prompts
-          or Motion Prompts. Do not summarize later scenes.
-          Give each scene a distinct story purpose and detailed
-          action. Use Telugu dialogue and respectful storytelling.
-          Begin with a strong hook and end with a story-relevant
-          cliffhanger. Do not invent events that contradict the
-          traditional Ramayana.
-
-          After the scenes, provide:
-          3 Telugu titles, 3 Telugu-English titles, one recommended
-          title, Telugu and English descriptions, relevant hashtags,
-          comma-separated SEO tags, pinned comment, community post,
-          thumbnail concept with Telugu text, thumbnail image prompt,
-          and a promotional Short opening hook.
-
-          Return Markdown. Do not promise guaranteed views or virality.
-          """
-
-          body = json.dumps({
-              "contents": [{
-                  "role": "user",
-                  "parts": [{"text": prompt}]
-              }],
-              "generationConfig": {
-                  "temperature": 0.8,
-                  "maxOutputTokens": 30000
-              }
-          }).encode("utf-8")
-
-          result = None
-
-          for attempt in range(5):
-              request = urllib.request.Request(
-                  API_URL,
-                  data=body,
-                  headers={
-                      "Content-Type": "application/json",
-                      "x-goog-api-key": API_KEY
-                  },
-                  method="POST"
-              )
-
-              try:
-                  print(
-                      f"Calling Gemini: attempt {attempt + 1}/5"
-                  )
-                  with urllib.request.urlopen(
-                      request, timeout=300
-                  ) as response:
-                      result = json.loads(
-                          response.read().decode("utf-8")
-                      )
-                  break
-
-              except urllib.error.HTTPError as error:
-                  details = error.read().decode(
-                      "utf-8", errors="replace"
-                  )
-                  if error.code in (
-                      408, 429, 500, 502, 503, 504
-                  ) and attempt < 4:
-                      delay = 2 ** (attempt + 1) + random.random()
-                      print(
-                          f"HTTP {error.code}; retrying in "
-                          f"{delay:.1f} seconds."
-                      )
-                      time.sleep(delay)
-                      continue
-                  raise SystemExit(
-                      f"Gemini API HTTP {error.code}: "
-                      f"{details[:3000]}"
-                  )
-
-              except (urllib.error.URLError, TimeoutError) as error:
-                  if attempt < 4:
-                      delay = 2 ** (attempt + 1) + random.random()
-                      print(
-                          f"Network error; retrying in {delay:.1f}s"
-                      )
-                      time.sleep(delay)
-                      continue
-                  raise SystemExit(f"Network error: {error}")
-
-          if result is None:
-              raise SystemExit("Gemini request failed.")
-
-          candidates = result.get("candidates", [])
-          if not candidates:
-              raise SystemExit(
-                  "Gemini returned no candidates: "
-                  + json.dumps(
-                      result.get("promptFeedback", {}),
-                      ensure_ascii=False
-                  )
-              )
-
-          parts = candidates[0].get("content", {}).get("parts", [])
-          episode_text = "\n".join(
-              part["text"]
-              for part in parts
-              if isinstance(part, dict) and "text" in part
-          ).strip()
-
-          if not episode_text:
-              raise SystemExit("Gemini returned an empty response.")
-
-          if candidates[0].get("finishReason") == "MAX_TOKENS":
-              episode_text += (
-                  "\n\n> WARNING: Output reached the token limit. "
-                  "The episode may be incomplete."
-              )
-
-          OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-          OUTPUT.write_text(
-              episode_text + "\n", encoding="utf-8"
-          )
-
-          print(f"SUCCESS: Saved {OUTPUT}")
-          print(f"Output size: {OUTPUT.stat().st_size} bytes")
-          PY
+          GEMINI_MODEL: ${{ inputs.gemini_model }}
+          EPISODE_NUMBER: ${{ inputs.episode_number }}
+          EPISODE_TITLE: ${{ inputs.episode_title }}
+          STORY_OUTLINE: ${{ inputs.story_outline }}
+          SCENE_OFFSET: ${{ inputs.scene_offset }}
+          TOTAL_SCENES: "60"
+          BATCH_SIZE: "10"
+        run: python3 scripts/generate_episode.py
 
       - name: Save episode package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: telugu-devotee-episode
+          name: telugu-devotee-episode-${{ inputs.episode_number }}
           path: output/episode_package.md
-          if-no-files-found: error
-          retention-days: 7
-          
+          if-no-files-found: warn
+          retention-days: 30
