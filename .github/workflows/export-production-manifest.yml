@@ -1,29 +1,43 @@
 name: TELUGU DEVOTEE Production Manifest Export
 
-# Separate manual utility workflow. Does not modify or trigger daily.yml.
+# Manual utility workflow: recovers an existing episode artifact; does not call Gemini.
 on:
   workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Existing Episode Package workflow run ID"
+        required: true
+        default: "38144490097"
+      episode_artifact_name:
+        description: "Artifact name from that run"
+        required: true
+        default: "telugu-devotee-episode-2"
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   export-manifest:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Recover existing episode package (no Gemini API call)
+        uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
+          name: ${{ inputs.episode_artifact_name }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: output
 
       - name: Check episode package exists
         run: |
           if [ ! -f output/episode_package.md ]; then
-            echo "::error::output/episode_package.md is missing. Generate and save the episode package first."
+            echo "::error::Artifact did not contain output/episode_package.md. Check the source run ID and artifact name."
+            find output -maxdepth 2 -type f -print || true
             exit 1
           fi
 
