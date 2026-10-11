@@ -12,9 +12,20 @@ permissions:
 jobs:
   daily-check:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Start daily workflow
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check repository files
         run: |
-          echo "TELUGU DEVOTEE daily workflow started."
-          echo "Next step: connect episode generation and YouTube upload."
-          
+          echo "TELUGU DEVOTEE workflow started"
+          echo "Checking available skill files..."
+
+          echo "Repository files:"
+          find . -maxdepth 4 -type f | sort | head -200
+
+          echo "Searching for skill instructions:"
+          find . -type f -name "SKILL.md" -print
+
+          echo "Repository check completed."
