@@ -1,0 +1,71 @@
+name: TELUGU DEVOTEE Flow Prompt Pack
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run ID that contains telugu-devotee-production-manifest; leave blank to use the latest manifest export run"
+        required: false
+        default: ""
+  workflow_run:
+    workflows: ["TELUGU DEVOTEE Production Manifest Export"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  prepare-prompt-pack:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select source run
+        id: source
+        env:
+          MANUAL_RUN_ID: ${{ inputs.source_run_id }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            echo "run_id=$EVENT_RUN_ID" >> "$GITHUB_OUTPUT"
+          elif [ -n "$MANUAL_RUN_ID" ]; then
+            echo "run_id=$MANUAL_RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::For a manual run, provide the run ID that created the production manifest artifact."
+            exit 1
+          fi
+
+      - name: Download existing production manifest (no Gemini call)
+        uses: actions/download-artifact@v4
+        with:
+          name: telugu-devotee-production-manifest
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: downloaded
+
+      - name: Locate manifest and prepare prompt pack
+        run: |
+          mkdir -p output
+          MANIFEST="$(find downloaded -type f -name production_manifest.csv -print -quit)"
+          if [ -z "$MANIFEST" ]; then
+            echo "::error::production_manifest.csv was not found in the selected run's artifact."
+            find downloaded -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+          cp "$MANIFEST" output/production_manifest.csv
+          python scripts/export_flow_prompt_pack.py
+
+      - name: Upload Flow prompt pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: telugu-devotee-flow-prompt-pack
+          path: |
+            output/telugu-devotee-flow-prompt-pack.zip
+            output/flow_prompt_pack/scene_index.json
+          if-no-files-found: error
+          retention-days: 30
