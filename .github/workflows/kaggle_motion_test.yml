@@ -2,12 +2,6 @@ name: TELUGU DEVOTEE Kaggle Motion Test
 
 on:
   workflow_dispatch:
-    inputs:
-      scene_number:
-        description: 'Scene number to generate from the existing episode script'
-        required: true
-        default: '1'
-        type: string
 
 permissions:
   contents: read
@@ -22,8 +16,6 @@ jobs:
 
       - name: Select scene prompt automatically from episode package
         id: scene
-        env:
-          SCENE_NUMBER: ${{ inputs.scene_number }}
         run: |
           if [ ! -f output/episode_package.md ]; then
             echo "::error::output/episode_package.md is missing. Run TELUGU DEVOTEE Episode Package first and make sure its checkpoint was committed."
@@ -33,11 +25,12 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
-          requested = int(os.environ['SCENE_NUMBER'])
           data = json.loads(Path('output/production_manifest.json').read_text(encoding='utf-8'))
-          scene = next((s for s in data['scenes'] if int(s['scene_number']) == requested), None)
-          if scene is None:
-              raise SystemExit(f'No scene {requested} found in output/episode_package.md')
+          scenes = sorted(data['scenes'], key=lambda s: int(s['scene_number']))
+          if not scenes:
+              raise SystemExit('No scenes found in output/episode_package.md')
+          scene = scenes[0]
+          requested = int(scene['scene_number'])
           image_prompt = (scene.get('image_prompt') or '').strip()
           motion_prompt = (scene.get('motion_prompt') or '').strip()
           if not image_prompt and not motion_prompt:
@@ -46,7 +39,7 @@ jobs:
           Path('output/kaggle_scene_prompt.txt').write_text(prompt, encoding='utf-8')
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
               f.write(f"scene_number={requested}\n")
-          print(f"Automatically selected scene {requested}; prompt length={len(prompt)} characters.")
+          print(f"Automatically selected first available scene {requested}; prompt length={len(prompt)} characters.")
           PY
 
       - name: Configure Kaggle API credentials
