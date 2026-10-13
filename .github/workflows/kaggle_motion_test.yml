@@ -1,0 +1,124 @@
+name: TELUGU DEVOTEE Kaggle Motion Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      scene_prompt:
+        description: 'Paste ONE scene visual/motion prompt (English works best). Do not include secrets.'
+        required: true
+        type: string
+      scene_number:
+        description: 'Scene number for the test output name'
+        required: true
+        default: '1'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  motion-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Configure Kaggle API credentials
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
+            echo 'Missing KAGGLE_USERNAME or KAGGLE_KEY repository secret.'
+            exit 1
+          fi
+          mkdir -p "$HOME/.kaggle"
+          python - <<'PY'
+          import json, os
+          p = os.path.expanduser('~/.kaggle/kaggle.json')
+          with open(p, 'w', encoding='utf-8') as f:
+              json.dump({'username': os.environ['KAGGLE_USERNAME'], 'key': os.environ['KAGGLE_KEY']}, f)
+          os.chmod(p, 0o600)
+          PY
+          python -m pip install --upgrade kaggle
+
+      - name: Create one-scene Kaggle notebook
+        env:
+          SCENE_PROMPT: ${{ inputs.scene_prompt }}
+          SCENE_NUMBER: ${{ inputs.scene_number }}
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          mkdir -p kaggle_motion_job
+          python - <<'PY'
+          import json, os, re
+          prompt = os.environ['SCENE_PROMPT']
+          scene = re.sub(r'[^0-9A-Za-z_-]', '', os.environ.get('SCENE_NUMBER', '1')) or '1'
+          user = os.environ['KAGGLE_USERNAME']
+          slug = 'telugu-devotee-motion-test'
+          cells = [
+            {'cell_type':'markdown','metadata':{},'source':['# TELUGU DEVOTEE — one-scene motion test\n','Experimental free GPU run. Output is for review only; no publishing.\n']},
+            {'cell_type':'code','execution_count':None,'metadata':{},'outputs':[],'source':[
+              'import os, subprocess, sys, torch\n',
+              'print("GPU available:", torch.cuda.is_available())\n',
+              'if not torch.cuda.is_available(): raise RuntimeError("Kaggle GPU is unavailable for this session; no video generated.")\n',
+              'subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/huggingface/diffusers.git", "transformers", "accelerate", "ftfy", "imageio", "imageio-ffmpeg"])\n',
+              'from diffusers import WanPipeline\n',
+              'from diffusers.utils import export_to_video\n',
+              'prompt = ' + repr(prompt) + '\n',
+              'print("Loading Wan2.1 T2V 1.3B; first run may take a long time to download the model.")\n',
+              'pipe = WanPipeline.from_pretrained("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", torch_dtype=torch.float16)\n',
+              'pipe.enable_model_cpu_offload()\n',
+              'result = pipe(prompt=prompt, height=480, width=832, num_frames=17, num_inference_steps=20)\n',
+              'frames = result.frames[0]\n',
+              'out = "/kaggle/working/telugu_devotee_scene_' + scene + '_motion_test.mp4"\n',
+              'export_to_video(frames, out, fps=16)\n',
+              'print("VIDEO_OUTPUT:", out, "bytes:", os.path.getsize(out))\n'
+            ]}
+          ]
+          notebook = {'cells':cells,'metadata':{'kernelspec':{'display_name':'Python 3','language':'python','name':'python3'},'language_info':{'name':'python','version':'3.11.0'}},'nbformat':4,'nbformat_minor':5}
+          with open('kaggle_motion_job/main.ipynb','w',encoding='utf-8') as f: json.dump(notebook,f)
+          metadata = {'id': f'{user}/{slug}', 'title':'TELUGU DEVOTEE One Scene Motion Test', 'code_file':'main.ipynb', 'language':'python', 'kernel_type':'notebook', 'is_private':True, 'enable_gpu':True, 'enable_internet':True, 'dataset_sources':[], 'competition_sources':[], 'kernel_sources':[]}
+          with open('kaggle_motion_job/kernel-metadata.json','w',encoding='utf-8') as f: json.dump(metadata,f,indent=2)
+          print('Prepared private one-scene notebook. Prompt is not printed.')
+
+      - name: Submit notebook to Kaggle GPU
+        run: kaggle kernels push -p kaggle_motion_job
+
+      - name: Wait for Kaggle job
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          id="$KAGGLE_USERNAME/telugu-devotee-motion-test"
+          for attempt in $(seq 1 70); do
+            status="$(kaggle kernels status "$id" 2>&1 || true)"
+            echo "Kaggle status check $attempt: $(printf '%s' "$status" | tail -n 1)"
+            case "$status" in
+              *COMPLETE*) exit 0 ;;
+              *ERROR*|*CANCELLED*) echo "$status"; exit 1 ;;
+            esac
+            sleep 60
+          done
+          echo 'Timed out waiting for Kaggle. Check the private notebook in your Kaggle account.'
+          exit 1
+
+      - name: Download motion test output
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          mkdir -p output/kaggle_motion_test
+          kaggle kernels output "$KAGGLE_USERNAME/telugu-devotee-motion-test" -p output/kaggle_motion_test
+          find output/kaggle_motion_test -maxdepth 2 -type f -printf '%p %s bytes\n'
+
+      - name: Upload review-only MP4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: telugu-devotee-one-scene-motion-test
+          path: output/kaggle_motion_test/**
+          if-no-files-found: error
+          retention-days: 7
