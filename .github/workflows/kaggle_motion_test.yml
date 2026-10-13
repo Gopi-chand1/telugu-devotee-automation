@@ -3,12 +3,8 @@ name: TELUGU DEVOTEE Kaggle Motion Test
 on:
   workflow_dispatch:
     inputs:
-      scene_prompt:
-        description: 'Paste ONE scene visual/motion prompt (English works best). Do not include secrets.'
-        required: true
-        type: string
       scene_number:
-        description: 'Scene number for the test output name'
+        description: 'Scene number to generate from the existing episode script'
         required: true
         default: '1'
         type: string
@@ -21,13 +17,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Check out repository
+      - name: Check out repository and existing episode script
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Select scene prompt automatically from episode package
+        id: scene
+        env:
+          SCENE_NUMBER: ${{ inputs.scene_number }}
+        run: |
+          if [ ! -f output/episode_package.md ]; then
+            echo "::error::output/episode_package.md is missing. Run TELUGU DEVOTEE Episode Package first and make sure its checkpoint was committed."
+            exit 1
+          fi
+          python scripts/export_production_assets.py
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          requested = int(os.environ['SCENE_NUMBER'])
+          data = json.loads(Path('output/production_manifest.json').read_text(encoding='utf-8'))
+          scene = next((s for s in data['scenes'] if int(s['scene_number']) == requested), None)
+          if scene is None:
+              raise SystemExit(f'No scene {requested} found in output/episode_package.md')
+          image_prompt = (scene.get('image_prompt') or '').strip()
+          motion_prompt = (scene.get('motion_prompt') or '').strip()
+          if not image_prompt and not motion_prompt:
+              raise SystemExit(f'Scene {requested} has no IMAGE PROMPT or MOTION PROMPT.')
+          prompt = 'Create a cinematic realistic Indian epic video. Maintain the same character appearance as described in the scene.\n\nIMAGE PROMPT:\n' + image_prompt + '\n\nMOTION PROMPT:\n' + motion_prompt
+          Path('output/kaggle_scene_prompt.txt').write_text(prompt, encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+              f.write(f"scene_number={requested}\n")
+          print(f"Automatically selected scene {requested}; prompt length={len(prompt)} characters.")
+          PY
 
       - name: Configure Kaggle API credentials
         env:
@@ -50,23 +70,23 @@ jobs:
 
       - name: Create one-scene Kaggle notebook
         env:
-          SCENE_PROMPT: ${{ inputs.scene_prompt }}
-          SCENE_NUMBER: ${{ inputs.scene_number }}
+          SCENE_NUMBER: ${{ steps.scene.outputs.scene_number }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         run: |
           mkdir -p kaggle_motion_job
           python - <<'PY'
-          import json, os, re
-          prompt = os.environ['SCENE_PROMPT']
-          scene = re.sub(r'[^0-9A-Za-z_-]', '', os.environ.get('SCENE_NUMBER', '1')) or '1'
+          import json, os
+          from pathlib import Path
+          prompt = Path('output/kaggle_scene_prompt.txt').read_text(encoding='utf-8')
+          scene = ''.join(c for c in os.environ.get('SCENE_NUMBER', '1') if c.isalnum() or c in '_-') or '1'
           user = os.environ['KAGGLE_USERNAME']
           slug = 'telugu-devotee-motion-test'
           cells = [
-            {'cell_type':'markdown','metadata':{},'source':['# TELUGU DEVOTEE — one-scene motion test\n','Experimental free GPU run. Output is for review only; no publishing.\n']},
+            {'cell_type':'markdown','metadata':{},'source':['# TELUGU DEVOTEE — one-scene motion test\n','Prompt selected automatically from the repository episode script. Review output only; no publishing.\n']},
             {'cell_type':'code','execution_count':None,'metadata':{},'outputs':[],'source':[
               'import os, subprocess, sys, torch\n',
               'print("GPU available:", torch.cuda.is_available())\n',
-              'if not torch.cuda.is_available(): raise RuntimeError("Kaggle GPU is unavailable for this session; no video generated.")\n',
+              'if not torch.cuda.is_available(): raise RuntimeError("Kaggle GPU is unavailable; no video generated.")\n',
               'subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/huggingface/diffusers.git", "transformers", "accelerate", "ftfy", "imageio", "imageio-ffmpeg"])\n',
               'from diffusers import WanPipeline\n',
               'from diffusers.utils import export_to_video\n',
