@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   motion-test:
@@ -14,11 +15,38 @@ jobs:
       - name: Check out repository and existing episode script
         uses: actions/checkout@v4
 
+      - name: Recover episode package from latest workflow artifact if needed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f output/episode_package.md ]; then
+            echo "Episode package found in repository checkout."
+            exit 0
+          fi
+          echo "Episode package is not committed on the branch; looking for the latest Episode Package artifact."
+          mkdir -p output
+          run_id="$(gh run list --workflow daily.yml --limit 20 --json databaseId --jq '.[0].databaseId // empty')"
+          if [ -z "$run_id" ]; then
+            echo "::error::No Episode Package workflow run found. Run TELUGU DEVOTEE Episode Package first."
+            exit 1
+          fi
+          echo "Trying to download episode artifact from workflow run $run_id."
+          if ! gh run download "$run_id" --name "telugu-devotee-episode-2" --dir output; then
+            echo "::error::Could not download telugu-devotee-episode-2 from the latest Episode Package run. Check that run's Artifacts section; it may not have produced the Markdown file or may use a different episode number."
+            exit 1
+          fi
+          if [ ! -f output/episode_package.md ]; then
+            echo "::error::Artifact downloaded, but output/episode_package.md was not found at the expected path."
+            find output -maxdepth 3 -type f -print
+            exit 1
+          fi
+          echo "Episode package recovered from the workflow artifact."
+
       - name: Select scene prompt automatically from episode package
         id: scene
         run: |
           if [ ! -f output/episode_package.md ]; then
-            echo "::error::output/episode_package.md is missing. Run TELUGU DEVOTEE Episode Package first and make sure its checkpoint was committed."
+            echo "::error::Episode package missing after repository/artifact recovery."
             exit 1
           fi
           python scripts/export_production_assets.py
