@@ -79,6 +79,10 @@ jobs:
             echo 'Missing KAGGLE_USERNAME or KAGGLE_KEY repository secret.'
             exit 1
           fi
+          if [ "$KAGGLE_USERNAME" != "rangisetti6777" ]; then
+            echo "::error::KAGGLE_USERNAME secret must match the owner in your Kaggle notebook URL: rangisetti6777. Update the username secret only; never paste the API key into chat."
+            exit 1
+          fi
           mkdir -p "$HOME/.kaggle"
           python - <<'PY'
           import json, os
@@ -101,7 +105,7 @@ jobs:
           prompt = Path('output/kaggle_scene_prompt.txt').read_text(encoding='utf-8')
           scene = ''.join(c for c in os.environ.get('SCENE_NUMBER', '1') if c.isalnum() or c in '_-') or '1'
           user = os.environ['KAGGLE_USERNAME']
-          slug = 'telugu-devotee-motion-test'
+          slug = 'telugu-devotee-one-scene-motion-test'
           cells = [
             {'cell_type':'markdown','metadata':{},'source':['# TELUGU DEVOTEE — one-scene motion test\n','Prompt selected automatically from the repository episode script. Review output only; no publishing.\n']},
             {'cell_type':'code','execution_count':None,'metadata':{},'outputs':[],'source':[
@@ -135,7 +139,7 @@ jobs:
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         run: |
-          id="$KAGGLE_USERNAME/telugu-devotee-motion-test"
+          id="$KAGGLE_USERNAME/telugu-devotee-one-scene-motion-test"
           for attempt in $(seq 1 70); do
             status="$(kaggle kernels status "$id" 2>&1 || true)"
             echo "Kaggle status check $attempt: $(printf '%s' "$status" | tail -n 1)"
@@ -153,7 +157,7 @@ jobs:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         run: |
           mkdir -p output/kaggle_motion_test
-          kaggle kernels output "$KAGGLE_USERNAME/telugu-devotee-motion-test" -p output/kaggle_motion_test
+          kaggle kernels output "$KAGGLE_USERNAME/telugu-devotee-one-scene-motion-test" -p output/kaggle_motion_test
           find output/kaggle_motion_test -maxdepth 2 -type f -printf '%p %s bytes\n'
 
       - name: Upload review-only MP4 artifact
