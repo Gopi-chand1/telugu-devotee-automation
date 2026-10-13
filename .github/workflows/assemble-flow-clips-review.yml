@@ -76,8 +76,10 @@ jobs:
           PY
 
       - name: Assemble numbered clips (preserve existing audio)
+        env:
+          SCENE_SECONDS: ${{ inputs.scene_seconds }}
         run: |
-          python scripts/assemble_flow_clips_review.py --clips incoming-clips --seconds "${{ inputs.scene_seconds }}" --output output/telugu_devotee_review.mp4
+          python scripts/assemble_flow_clips_review.py --clips incoming-clips --seconds "$SCENE_SECONDS" --output output/telugu_devotee_review.mp4
 
       - name: Upload review video (not published)
         uses: actions/upload-artifact@v4
