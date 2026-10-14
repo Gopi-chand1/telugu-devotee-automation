@@ -4,11 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       clips_zip_url:
-        description: "Direct HTTPS download URL to video ZIP (S01.mp4, S02.mp4, ...). Use Google Vids first; use Google Flow clips if Vids limit is reached."
+        description: "Direct HTTPS download URL to numbered video ZIP (S01.mp4, S02.mp4...). Export clips from Google Vids first; use Google Flow for scenes left when Vids quota runs out."
         required: true
         type: string
+      audio_mode:
+        description: "Audio source: use existing audio ZIP, generate with ElevenLabs Bunty, or keep clip audio."
+        required: true
+        default: "elevenlabs_bunty"
+        type: choice
+        options:
+          - elevenlabs_bunty
+          - audio_zip
+          - clip_audio
       audio_zip_url:
-        description: "Optional direct HTTPS URL to voice ZIP (S01.wav or scene_001.wav...). Use ElevenLabs Bunty punchy/crispy voice if the existing voice sounds poor; leave blank to keep clip audio."
+        description: "Direct HTTPS URL to a ZIP with S01.wav / scene_001.wav files; only used when audio_mode=audio_zip."
         required: false
         default: ""
         type: string
@@ -24,7 +33,7 @@ permissions:
 jobs:
   assemble-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 90
     steps:
       - name: Checkout existing repository
         uses: actions/checkout@v4
@@ -74,23 +83,122 @@ jobs:
               if total > 4 * 1024 * 1024 * 1024:
                   raise SystemExit("Extracted video ZIP exceeds 4 GB safety limit.")
           z.extractall("incoming-clips")
-          vids = list(Path("incoming-clips").rglob("*.mp4")) + list(Path("incoming-clips").rglob("*.MP4"))
+          vids = [p for p in Path("incoming-clips").rglob("*") if p.is_file() and p.suffix.lower() == ".mp4"]
           print(f"Found {len(vids)} MP4 files")
           if not vids:
               raise SystemExit("ZIP contains no MP4 clips. Name them S01.mp4, S02.mp4, ...")
           PY
 
-      - name: Download optional voice ZIP
-        if: ${{ inputs.audio_zip_url != '' }}
+      - name: Check ElevenLabs secrets
+        if: ${{ inputs.audio_mode == 'elevenlabs_bunty' }}
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          if [ -z "$ELEVENLABS_API_KEY" ]; then
+            echo "::error::Add ELEVENLABS_API_KEY under Repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if [ ! -s output/episode_package.md ]; then
+            echo "::error::output/episode_package.md is missing. Run the episode package workflow first and ensure the Markdown is committed to the main branch."
+            exit 1
+          fi
+
+      - name: Generate Bunty voice tracks with ElevenLabs
+        if: ${{ inputs.audio_mode == 'elevenlabs_bunty' }}
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+        run: |
+          python - <<'PY'
+          import json, os, re, time, urllib.error, urllib.parse, urllib.request
+          from pathlib import Path
+
+          api_key = os.environ["ELEVENLABS_API_KEY"].strip()
+          voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+          base = "https://api.elevenlabs.io/v1"
+
+          def request(url, method="GET", payload=None, attempts=5):
+              data = json.dumps(payload).encode() if payload is not None else None
+              headers = {"xi-api-key": api_key, "Accept": "application/json"}
+              if data is not None:
+                  headers["Content-Type"] = "application/json"
+              for attempt in range(attempts):
+                  req = urllib.request.Request(url, data=data, headers=headers, method=method)
+                  try:
+                      with urllib.request.urlopen(req, timeout=180) as response:
+                          return response.read(), response.headers.get("Content-Type", "")
+                  except urllib.error.HTTPError as e:
+                      detail = e.read().decode("utf-8", "replace")[:1000]
+                      if e.code in (429, 500, 502, 503, 504) and attempt < attempts - 1:
+                          time.sleep(4 * (attempt + 1))
+                          continue
+                      raise SystemExit(f"ElevenLabs API error {e.code}: {detail}")
+              raise SystemExit("ElevenLabs request failed after retries.")
+
+          if not voice_id:
+              raw, _ = request(base + "/voices")
+              voices = json.loads(raw).get("voices", [])
+              matches = [v for v in voices if v.get("name", "").strip().casefold() == "bunty"]
+              if len(matches) != 1:
+                  names = ", ".join(v.get("name", "") for v in voices if "bunty" in v.get("name", "").casefold()) or "(no matching Bunty voice found)"
+                  raise SystemExit("Could not uniquely find a voice named exactly Bunty in this ElevenLabs account. Add ELEVENLABS_VOICE_ID repository secret with the correct voice ID. Similar matches: " + names)
+              voice_id = matches[0]["voice_id"]
+              print("Found the exact Bunty voice in the connected ElevenLabs account.")
+
+          md = Path("output/episode_package.md").read_text(encoding="utf-8")
+          parts = re.split(r"(?im)^###\s*SCENE\s+(\d+)\s*(?:[—|\-]).*$", md)
+          scenes = []
+          for i in range(1, len(parts), 2):
+              number, block = int(parts[i]), parts[i + 1]
+              m = re.search(r"(?m)^DIALOGUE:\s*(.+?)\s*$", block)
+              if not m:
+                  m = re.search(r"(?m)^Telugu Character Dialogue:\s*(.+?)\s*$", block)
+              if not m:
+                  print(f"WARNING: no dialogue line for scene {number}; skipping")
+                  continue
+              line = re.sub(r"^\[(?:PARAPHRASE|VERIFY[^\]]*)\]\s*", "", m.group(1).strip(), flags=re.I)
+              if len(line) >= 2 and line[0] in ('"', '“') and line[-1] in ('"', '”'):
+                  line = line[1:-1].strip()
+              if line:
+                  scenes.append((number, line))
+          if not scenes:
+              raise SystemExit("No scene dialogue found in output/episode_package.md.")
+          out = Path("incoming-audio")
+          out.mkdir(parents=True, exist_ok=True)
+          print(f"Generating ElevenLabs voice for {len(scenes)} scenes using voice ID {voice_id}.")
+          for number, text in scenes:
+              dest = out / f"scene_{number:03d}.mp3"
+              payload = {
+                  "text": text,
+                  "model_id": "eleven_multilingual_v2",
+                  "voice_settings": {
+                      "stability": 0.38,
+                      "similarity_boost": 0.82,
+                      "style": 0.55,
+                      "use_speaker_boost": True
+                  }
+              }
+              url = base + "/text-to-speech/" + urllib.parse.quote(voice_id, safe="") + "?output_format=mp3_44100_128"
+              data, content_type = request(url, method="POST", payload=payload)
+              if not data or not content_type.lower().startswith("audio/"):
+                  raise SystemExit(f"Scene {number}: ElevenLabs returned unexpected content type {content_type!r}.")
+              dest.write_bytes(data)
+              print(f"Scene {number:02d}: PASS ({len(data)} bytes)")
+              time.sleep(0.3)
+          print(f"ElevenLabs audio complete: {len(scenes)} scenes. Review credit usage in ElevenLabs.")
+          PY
+
+      - name: Download optional existing audio ZIP
+        if: ${{ inputs.audio_mode == 'audio_zip' }}
         env:
           AUDIO_ZIP_URL: ${{ inputs.audio_zip_url }}
         run: |
           python - <<'PY'
-          import os, urllib.parse, urllib.request
+          import os, urllib.parse, urllib.request, zipfile
+          from pathlib import Path
           url = os.environ["AUDIO_ZIP_URL"].strip()
-          parsed = urllib.parse.urlparse(url)
-          if parsed.scheme != "https":
-              raise SystemExit("Voice ZIP URL must be HTTPS.")
+          if urllib.parse.urlparse(url).scheme != "https":
+              raise SystemExit("Audio ZIP URL must be a public HTTPS direct-download URL.")
           req = urllib.request.Request(url, headers={"User-Agent": "TELUGU-DEVOTEE-review-builder"})
           with urllib.request.urlopen(req, timeout=60) as response, open("voice.zip", "wb") as out:
               total = 0
@@ -98,35 +206,24 @@ jobs:
                   chunk = response.read(1024 * 1024)
                   if not chunk: break
                   total += len(chunk)
-                  if total > 1024 * 1024 * 1024:
-                      raise SystemExit("Voice ZIP exceeds the 1 GB safety limit.")
+                  if total > 1024 * 1024 * 1024: raise SystemExit("Audio ZIP exceeds 1 GB.")
                   out.write(chunk)
-          if total < 100:
-              raise SystemExit("Voice ZIP is unexpectedly small; check the direct-download URL.")
-          import zipfile
-          from pathlib import Path
           z = zipfile.ZipFile("voice.zip")
-          expanded = 0
           for item in z.infolist():
               p = Path(item.filename)
-              if p.is_absolute() or ".." in p.parts:
-                  raise SystemExit("Unsafe voice ZIP path rejected.")
-              expanded += item.file_size
-              if expanded > 2 * 1024 * 1024 * 1024:
-                  raise SystemExit("Extracted voice ZIP exceeds 2 GB safety limit.")
+              if p.is_absolute() or ".." in p.parts: raise SystemExit("Unsafe audio ZIP path rejected.")
           z.extractall("incoming-audio")
           audios = [p for p in Path("incoming-audio").rglob("*") if p.is_file() and p.suffix.lower() in {".wav", ".mp3", ".m4a", ".aac", ".flac"}]
-          if not audios:
-              raise SystemExit("Voice ZIP has no WAV/MP3/M4A/AAC/FLAC files.")
-          print(f"Found {len(audios)} voice audio files")
+          if not audios: raise SystemExit("Audio ZIP has no supported audio files.")
+          print(f"Found {len(audios)} audio tracks.")
           PY
 
-      - name: Assemble review video with separate voice when provided
+      - name: Assemble review video with chosen voice tracks
         env:
           SCENE_SECONDS: ${{ inputs.scene_seconds }}
-          AUDIO_ZIP_URL: ${{ inputs.audio_zip_url }}
+          AUDIO_MODE: ${{ inputs.audio_mode }}
         run: |
-          if [ -n "$AUDIO_ZIP_URL" ]; then
+          if [ "$AUDIO_MODE" = "elevenlabs_bunty" ] || [ "$AUDIO_MODE" = "audio_zip" ]; then
             python scripts/assemble_flow_clips_review.py --clips incoming-clips --audio-dir incoming-audio --seconds "$SCENE_SECONDS" --output output/telugu_devotee_review.mp4
           else
             python scripts/assemble_flow_clips_review.py --clips incoming-clips --seconds "$SCENE_SECONDS" --output output/telugu_devotee_review.mp4
