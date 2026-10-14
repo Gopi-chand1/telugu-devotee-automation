@@ -38,8 +38,25 @@ jobs:
       - name: Install CPU TTS dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # Install torch and its matching CPU-only torchaudio wheel from the same index.
+          python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
           python -m pip install parler-tts transformers soundfile numpy huggingface_hub
+
+      - name: Verify CPU PyTorch, Torchaudio, and Parler-TTS imports
+        run: |
+          python - <<'PY'
+          import torch
+          import torchaudio
+          from parler_tts import ParlerTTSForConditionalGeneration
+          from transformers import AutoTokenizer
+          print("PyTorch:", torch.__version__)
+          print("Torchaudio:", torchaudio.__version__)
+          print("CUDA available:", torch.cuda.is_available())
+          print("Parler-TTS import: PASS")
+          print("AutoTokenizer import: PASS")
+          if torch.version.cuda is not None:
+              raise SystemExit("Expected CPU-only PyTorch, but this build includes CUDA.")
+          PY
 
       - name: Generate scene audio (resumes existing WAV files)
         env:
