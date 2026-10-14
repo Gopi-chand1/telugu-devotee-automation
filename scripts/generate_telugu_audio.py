@@ -30,7 +30,7 @@ VOICE_DESCRIPTION = (
 
 def extract_scenes(markdown):
     """Read dialogue lines from both the current and legacy episode Markdown formats."""
-    parts = re.split(r"(?im)^###\s*SCENE\s+(\d+)\s*(?:[—-]|\\|).*$", markdown)
+    parts = re.split(r"(?im)^###\s*SCENE\s+(\d+)\s*(?:[—-]|[|]).*$", markdown)
     scenes = []
     dialogue_pattern = re.compile(
         r"(?m)^(?:DIALOGUE|Telugu Character Dialogue):\s*(.+?)\s*$"
