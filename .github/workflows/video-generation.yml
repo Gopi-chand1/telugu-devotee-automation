@@ -1,0 +1,57 @@
+name: TELUGU DEVOTEE - MoneyPrinterTurbo Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      episode_title:
+        description: "Video title / subject"
+        required: true
+        default: "తాటక వధ - రామాయణం"
+      script_path:
+        description: "Existing Markdown script path"
+        required: true
+        default: "output/episode_package.md"
+      aspect:
+        description: "Video aspect ratio"
+        type: choice
+        required: true
+        default: "16:9"
+        options:
+          - "16:9"
+          - "9:16"
+          - "1:1"
+
+permissions:
+  contents: read
+
+jobs:
+  generate-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout TELUGU DEVOTEE repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate video through MoneyPrinterTurbo API
+        env:
+          MPT_API_URL: ${{ secrets.MPT_API_URL }}
+          MPT_API_KEY: ${{ secrets.MPT_API_KEY }}
+          VIDEO_SUBJECT: ${{ inputs.episode_title }}
+          SCRIPT_PATH: ${{ inputs.script_path }}
+          VIDEO_ASPECT: ${{ inputs.aspect }}
+          OUTPUT_DIR: output/moneyprinterturbo
+        run: python scripts/build_video.py
+
+      - name: Upload video for review (never auto-publish)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: telugu-devotee-video-review
+          path: output/moneyprinterturbo/
+          if-no-files-found: warn
+          retention-days: 7
