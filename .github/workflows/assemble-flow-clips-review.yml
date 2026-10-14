@@ -1,16 +1,21 @@
-name: TELUGU DEVOTEE — Assemble Flow Clips for Review
+name: TELUGU DEVOTEE — Assemble Video + Voice for Review
 
 on:
   workflow_dispatch:
     inputs:
       clips_zip_url:
-        description: "Direct-download URL to a ZIP containing numbered MP4s (S01.mp4, S02.mp4...)"
+        description: "Direct HTTPS download URL to video ZIP (S01.mp4, S02.mp4, ...). Use Google Vids first; use Google Flow clips if Vids limit is reached."
         required: true
         type: string
+      audio_zip_url:
+        description: "Optional direct HTTPS URL to voice ZIP (S01.wav or scene_001.wav...). Use ElevenLabs Bunty punchy/crispy voice if the existing voice sounds poor; leave blank to keep clip audio."
+        required: false
+        default: ""
+        type: string
       scene_seconds:
-        description: "Seconds per clip (Veo clips are commonly 8 seconds)"
+        description: "Target duration per scene"
         required: true
-        default: "8"
+        default: "10"
         type: string
 
 permissions:
@@ -19,7 +24,7 @@ permissions:
 jobs:
   assemble-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Checkout existing repository
         uses: actions/checkout@v4
@@ -29,7 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Download clip ZIP
+      - name: Download video clips ZIP
         env:
           CLIPS_ZIP_URL: ${{ inputs.clips_zip_url }}
         run: |
@@ -47,14 +52,14 @@ jobs:
                   if not chunk: break
                   total += len(chunk)
                   if total > 2 * 1024 * 1024 * 1024:
-                      raise SystemExit("ZIP exceeds the 2 GB safety limit.")
+                      raise SystemExit("Video ZIP exceeds the 2 GB safety limit.")
                   out.write(chunk)
           if total < 100:
               raise SystemExit("Downloaded file is unexpectedly small; URL may be a preview page, not a direct ZIP download.")
-          print(f"Downloaded ZIP: {total} bytes")
+          print(f"Downloaded video ZIP: {total} bytes")
           PY
 
-      - name: Extract and validate clips
+      - name: Extract and validate video clips
         run: |
           python - <<'PY'
           import zipfile
@@ -67,19 +72,65 @@ jobs:
                   raise SystemExit("Unsafe ZIP path rejected.")
               total += item.file_size
               if total > 4 * 1024 * 1024 * 1024:
-                  raise SystemExit("Extracted ZIP exceeds 4 GB safety limit.")
+                  raise SystemExit("Extracted video ZIP exceeds 4 GB safety limit.")
           z.extractall("incoming-clips")
           vids = list(Path("incoming-clips").rglob("*.mp4")) + list(Path("incoming-clips").rglob("*.MP4"))
           print(f"Found {len(vids)} MP4 files")
           if not vids:
-              raise SystemExit("ZIP contains no MP4 clips.")
+              raise SystemExit("ZIP contains no MP4 clips. Name them S01.mp4, S02.mp4, ...")
           PY
 
-      - name: Assemble numbered clips (preserve existing audio)
+      - name: Download optional voice ZIP
+        if: ${{ inputs.audio_zip_url != '' }}
+        env:
+          AUDIO_ZIP_URL: ${{ inputs.audio_zip_url }}
+        run: |
+          python - <<'PY'
+          import os, urllib.parse, urllib.request
+          url = os.environ["AUDIO_ZIP_URL"].strip()
+          parsed = urllib.parse.urlparse(url)
+          if parsed.scheme != "https":
+              raise SystemExit("Voice ZIP URL must be HTTPS.")
+          req = urllib.request.Request(url, headers={"User-Agent": "TELUGU-DEVOTEE-review-builder"})
+          with urllib.request.urlopen(req, timeout=60) as response, open("voice.zip", "wb") as out:
+              total = 0
+              while True:
+                  chunk = response.read(1024 * 1024)
+                  if not chunk: break
+                  total += len(chunk)
+                  if total > 1024 * 1024 * 1024:
+                      raise SystemExit("Voice ZIP exceeds the 1 GB safety limit.")
+                  out.write(chunk)
+          if total < 100:
+              raise SystemExit("Voice ZIP is unexpectedly small; check the direct-download URL.")
+          import zipfile
+          from pathlib import Path
+          z = zipfile.ZipFile("voice.zip")
+          expanded = 0
+          for item in z.infolist():
+              p = Path(item.filename)
+              if p.is_absolute() or ".." in p.parts:
+                  raise SystemExit("Unsafe voice ZIP path rejected.")
+              expanded += item.file_size
+              if expanded > 2 * 1024 * 1024 * 1024:
+                  raise SystemExit("Extracted voice ZIP exceeds 2 GB safety limit.")
+          z.extractall("incoming-audio")
+          audios = [p for p in Path("incoming-audio").rglob("*") if p.is_file() and p.suffix.lower() in {".wav", ".mp3", ".m4a", ".aac", ".flac"}]
+          if not audios:
+              raise SystemExit("Voice ZIP has no WAV/MP3/M4A/AAC/FLAC files.")
+          print(f"Found {len(audios)} voice audio files")
+          PY
+
+      - name: Assemble review video with separate voice when provided
         env:
           SCENE_SECONDS: ${{ inputs.scene_seconds }}
+          AUDIO_ZIP_URL: ${{ inputs.audio_zip_url }}
         run: |
-          python scripts/assemble_flow_clips_review.py --clips incoming-clips --seconds "$SCENE_SECONDS" --output output/telugu_devotee_review.mp4
+          if [ -n "$AUDIO_ZIP_URL" ]; then
+            python scripts/assemble_flow_clips_review.py --clips incoming-clips --audio-dir incoming-audio --seconds "$SCENE_SECONDS" --output output/telugu_devotee_review.mp4
+          else
+            python scripts/assemble_flow_clips_review.py --clips incoming-clips --seconds "$SCENE_SECONDS" --output output/telugu_devotee_review.mp4
+          fi
 
       - name: Upload review video (not published)
         uses: actions/upload-artifact@v4
