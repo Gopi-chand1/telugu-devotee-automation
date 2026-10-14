@@ -29,16 +29,25 @@ VOICE_DESCRIPTION = (
 )
 
 def extract_scenes(markdown):
+    """Read dialogue lines from both the current and legacy episode Markdown formats."""
     parts = re.split(r"(?m)^### Scene\s+(\d+)\s*[—-].*$", markdown)
     scenes = []
+    dialogue_pattern = re.compile(
+        r"(?m)^(?:DIALOGUE|Telugu Character Dialogue):\s*(.+?)\s*$"
+    )
     for i in range(1, len(parts), 2):
         number, block = int(parts[i]), parts[i + 1]
-        match = re.search(r"(?m)^Telugu Character Dialogue:\s*(.+?)\s*$", block)
+        match = dialogue_pattern.search(block)
         if not match:
             continue
         line = match.group(1).strip()
+        # Remove editorial labels; they are not spoken dialogue.
+        line = re.sub(r"^\[(?:PARAPHRASE|VERIFY[^\]]*)\]\s*", "", line, flags=re.IGNORECASE)
+        # Support legacy lines that include a speaker label before the spoken text.
         if ":" in line:
-            line = line.split(":", 1)[1].strip()
+            possible_prefix, remainder = line.split(":", 1)
+            if len(possible_prefix) <= 40 and not any(ch in possible_prefix for ch in "।!?"):
+                line = remainder.strip()
         if len(line) >= 2 and line[0] in ('"', "“") and line[-1] in ('"', "”"):
             line = line[1:-1].strip()
         if line:
